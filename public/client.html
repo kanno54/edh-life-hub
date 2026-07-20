@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EDH Life Hub - 子機コントローラー</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="client-container">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; position: relative;">
+      <div>
+        <h1 style="font-size: 1.8rem; margin-bottom: 0;">EDH Life Hub</h1>
+      </div>
+      <div class="connection-status" style="position: static;">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">接続中...</span>
+      </div>
+    </div>
+
+    <!-- プレイヤー選択画面 (初期状態) -->
+    <div id="selectionScreen" class="card" style="width: 100%; max-width: 100%;">
+      <h2 style="font-size: 1.5rem; margin-bottom: 0.5rem;">プレイヤーを選択</h2>
+      <p style="margin-bottom: 1.5rem;" id="selectionSubText">操作する自分のプレイヤー枠を選択してください。</p>
+      
+      <div class="selector-grid" id="selectorGrid">
+        <!-- JSで動的にボタン生成 -->
+      </div>
+    </div>
+
+    <!-- コントローラー画面 (非表示) -->
+    <div id="controllerScreen" class="counter-layout" style="display: none;">
+      <div id="playerTag" class="current-player-tag">Player 1</div>
+      
+      <!-- プレイヤー名入力 -->
+      <input type="text" id="nameInput" class="input-name" placeholder="プレイヤー名を入力" onchange="sendNameUpdate()" onkeyup="if(event.key === 'Enter') this.blur()">
+
+      <!-- ライフカウンター -->
+      <div id="lifeDisplay" class="client-life-display">40</div>
+
+      <div class="control-pad">
+        <button class="pad-btn plus" onclick="changeLife(1)">+1</button>
+        <button class="pad-btn plus" onclick="changeLife(5)">+5</button>
+        <button class="pad-btn minus" onclick="changeLife(-1)">-1</button>
+        <button class="pad-btn minus" onclick="changeLife(-5)">-5</button>
+      </div>
+
+      <!-- 毒・統率者ダメージ操作（アコーディオン） -->
+      <div class="accordion">
+        <div class="accordion-header" id="accordionHeader" onclick="toggleAccordion()">
+          <span>毒・統率者ダメージ操作</span>
+          <svg id="accordionArrow" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="transition: transform 0.3s;"><path d="M19 9l-7 7-7-7"/></svg>
+        </div>
+        <div class="accordion-content" id="accordionContent">
+          <!-- 毒カウンター操作 -->
+          <div class="sub-control-row" style="border-bottom: 1px solid var(--bg-card-border); padding-bottom: 1rem; margin-bottom: 1rem;">
+            <span class="sub-control-label" style="color: var(--accent-emerald);">毒カウンター</span>
+            <div class="sub-control-btns">
+              <button class="btn-small-pad" onclick="changePoison(-1)" style="color: var(--accent-rose);">-</button>
+              <span class="sub-control-val" id="poisonDisplay" style="color: var(--accent-emerald);">0</span>
+              <button class="btn-small-pad" onclick="changePoison(1)" style="color: var(--accent-emerald);">+</button>
+            </div>
+          </div>
+          
+          <!-- 統率者ダメージ操作 -->
+          <div id="commanderDamagePanel"></div>
+        </div>
+      </div>
+
+      <button class="btn btn-secondary" onclick="resetSelection()">プレイヤー変更</button>
+    </div>
+
+    <div style="text-align: center; margin-top: 1rem;">
+      <a href="index.html" class="btn btn-secondary" style="width: auto; padding: 0.75rem 1.5rem;">エントランスに戻る</a>
+    </div>
+  </div>
+
+  <script>
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+    const ws = new WebSocket(wsUrl);
+
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const selectionScreen = document.getElementById('selectionScreen');
+    const controllerScreen = document.getElementById('controllerScreen');
+    const selectorGrid = document.getElementById('selectorGrid');
+    const playerTag = document.getElementById('playerTag');
+    const nameInput = document.getElementById('nameInput');
+    const lifeDisplay = document.getElementById('lifeDisplay');
+    const poisonDisplay = document.getElementById('poisonDisplay');
+    const commanderDamagePanel = document.getElementById('commanderDamagePanel');
+
+    let selectedPlayerId = null;
+    let gameState = {
+      activePlayerCount: 4,
+      firstPlayerId: 1,
+      players: {}
+    };
+
+    ws.onopen = () => {
+      statusDot.classList.add('connected');
+      statusText.textContent = 'オンライン';
+    };
+
+    ws.onclose = () => {
+      statusDot.classList.remove('connected');
+      statusText.textContent = 'オフライン';
+      setTimeout(() => { window.location.reload(); }, 3000);
+    };
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+
+      if (message.type === 'init') {
+        gameState = message.state;
+        
+        // もし選択中のプレイヤーが有効範囲外になった場合は選択画面に戻す
+        if (selectedPlayerId && selectedPlayerId > gameState.activePlayerCount) {
+          resetSelection();
+        }
+
+        renderSelectionGrid();
+        updateUI();
+      } else if (message.type === 'update') {
+        const { playerId, field, value, subPlayerId } = message;
+        if (!gameState.players[playerId]) return;
+
+        if (field === 'life') {
+          gameState.players[playerId].life = value;
+        } else if (field === 'name') {
+          gameState.players[playerId].name = value;
+          if (selectedPlayerId && playerId !== selectedPlayerId) {
+            const labelEl = document.getElementById(`cmd-label-${playerId}`);
+            if (labelEl) labelEl.textContent = `vs ${value}`;
+          }
+          renderSelectionGrid();
+        } else if (field === 'poison') {
+          gameState.players[playerId].poison = value;
+        } else if (field === 'commanderDamage') {
+          if (gameState.players[playerId].commanderDamage) {
+            gameState.players[playerId].commanderDamage[subPlayerId] = value;
+          }
+        }
+
+        updateUI();
+      }
+    };
+
+    function renderSelectionGrid() {
+      selectorGrid.innerHTML = '';
+      const count = gameState.activePlayerCount || 4;
+      const fpId = gameState.firstPlayerId;
+
+      for (let i = 1; i <= count; i++) {
+        const p = gameState.players[i];
+        const pName = p?.name || `Player ${i}`;
+        const isFirst = (i === fpId);
+
+        const btn = document.createElement('button');
+        btn.className = `selector-btn selector-${((i - 1) % 4) + 1}`;
+        btn.innerHTML = `${isFirst ? '👑 ' : ''}${pName}`;
+        btn.onclick = () => selectPlayer(i);
+
+        selectorGrid.appendChild(btn);
+      }
+    }
+
+    function selectPlayer(id) {
+      selectedPlayerId = id;
+      
+      const isFirst = (id === gameState.firstPlayerId);
+      playerTag.className = `current-player-tag tag-${((id - 1) % 4) + 1}`;
+      playerTag.innerHTML = `${isFirst ? '👑 先攻 / ' : ''}Player ${id}`;
+
+      selectionScreen.style.display = 'none';
+      controllerScreen.style.display = 'flex';
+
+      if (gameState.players[id]) {
+        nameInput.value = gameState.players[id].name;
+      }
+
+      buildCommanderDamagePanel();
+      updateUI();
+    }
+
+    function resetSelection() {
+      selectedPlayerId = null;
+      selectionScreen.style.display = 'block';
+      controllerScreen.style.display = 'none';
+      
+      const content = document.getElementById('accordionContent');
+      const header = document.getElementById('accordionHeader');
+      const arrow = document.getElementById('accordionArrow');
+      content.classList.remove('open');
+      header.classList.remove('active');
+      arrow.style.transform = '';
+    }
+
+    function sendNameUpdate() {
+      if (!selectedPlayerId) return;
+      const newName = nameInput.value.trim() || `Player ${selectedPlayerId}`;
+      sendUpdate('name', newName);
+    }
+
+    function changeLife(amount) {
+      if (!selectedPlayerId || !gameState.players[selectedPlayerId]) return;
+      const currentLife = gameState.players[selectedPlayerId].life;
+      const newLife = Math.max(0, currentLife + amount);
+      
+      gameState.players[selectedPlayerId].life = newLife;
+      updateUI();
+      sendUpdate('life', newLife);
+    }
+
+    function changePoison(amount) {
+      if (!selectedPlayerId || !gameState.players[selectedPlayerId]) return;
+      const currentPoison = gameState.players[selectedPlayerId].poison;
+      const newPoison = Math.max(0, currentPoison + amount);
+
+      gameState.players[selectedPlayerId].poison = newPoison;
+      updateUI();
+      sendUpdate('poison', newPoison);
+    }
+
+    function changeCommanderDamage(subPlayerId, amount) {
+      if (!selectedPlayerId || !gameState.players[selectedPlayerId]) return;
+      const currentDmg = gameState.players[selectedPlayerId].commanderDamage[subPlayerId] || 0;
+      const newDmg = Math.max(0, currentDmg + amount);
+      const actualDiff = newDmg - currentDmg;
+
+      if (actualDiff !== 0) {
+        gameState.players[selectedPlayerId].commanderDamage[subPlayerId] = newDmg;
+        
+        // ライフ自動連動
+        const currentLife = gameState.players[selectedPlayerId].life;
+        const newLife = Math.max(0, currentLife - actualDiff);
+        gameState.players[selectedPlayerId].life = newLife;
+
+        updateUI();
+        sendUpdate('commanderDamage', newDmg, subPlayerId);
+        sendUpdate('life', newLife);
+      }
+    }
+
+    function sendUpdate(field, value, subPlayerId = null) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'update',
+          playerId: selectedPlayerId,
+          field,
+          value,
+          subPlayerId
+        }));
+      }
+    }
+
+    function updateUI() {
+      if (!selectedPlayerId || !gameState.players[selectedPlayerId]) return;
+
+      const p = gameState.players[selectedPlayerId];
+      lifeDisplay.textContent = p.life;
+      poisonDisplay.textContent = p.poison;
+
+      if (p.commanderDamage) {
+        for (const [subId, val] of Object.entries(p.commanderDamage)) {
+          const valEl = document.getElementById(`cmd-val-${subId}`);
+          if (valEl) valEl.textContent = val;
+        }
+      }
+    }
+
+    function buildCommanderDamagePanel() {
+      commanderDamagePanel.innerHTML = '';
+      if (!selectedPlayerId) return;
+
+      const count = gameState.activePlayerCount || 4;
+      const p = gameState.players[selectedPlayerId];
+      if (!p) return;
+
+      for (let i = 1; i <= count; i++) {
+        if (i !== selectedPlayerId) {
+          const opponentName = gameState.players[i]?.name || `Player ${i}`;
+          const currentDmg = (p.commanderDamage && p.commanderDamage[i]) || 0;
+
+          const row = document.createElement('div');
+          row.className = 'sub-control-row';
+          row.innerHTML = `
+            <span class="sub-control-label" id="cmd-label-${i}">vs ${opponentName}</span>
+            <div class="sub-control-btns">
+              <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, -1)" style="color: var(--accent-rose);">-</button>
+              <span class="sub-control-val" id="cmd-val-${i}">${currentDmg}</span>
+              <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, 1)" style="color: var(--accent-emerald);">+</button>
+            </div>
+          `;
+          commanderDamagePanel.appendChild(row);
+        }
+      }
+    }
+
+    function toggleAccordion() {
+      const content = document.getElementById('accordionContent');
+      const header = document.getElementById('accordionHeader');
+      const arrow = document.getElementById('accordionArrow');
+
+      content.classList.toggle('open');
+      header.classList.toggle('active');
+
+      if (content.classList.contains('open')) {
+        arrow.style.transform = 'rotate(180deg)';
+      } else {
+        arrow.style.transform = '';
+      }
+    }
+  </script>
+</body>
+</html>
