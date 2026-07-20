@@ -112,6 +112,18 @@
     </div>
   </div>
 
+  <!-- 統率者 検索結果候補選択モーダル -->
+  <div id="searchResultModalBackdrop" class="card-modal-backdrop" onclick="closeSearchResultModal(event)">
+    <div class="card-modal-content" style="max-width: 520px;" onclick="event.stopPropagation()">
+      <button class="card-modal-close" onclick="closeSearchResultModal()">&times;</button>
+      <div class="card-modal-title" style="font-size: 1.2rem; align-self: flex-start; margin-bottom: 0.25rem;">統率者カードの選択</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); text-align: left; margin-bottom: 0.75rem; width: 100%;">該当するカードが複数見つかりました。使用する統率者を選択してください。</p>
+      <div id="searchResultGrid" class="search-result-grid">
+        <!-- JSで動的に候補カードリストを挿入 -->
+      </div>
+    </div>
+  </div>
+
   <script>
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
@@ -140,7 +152,11 @@
     const modalCardType = document.getElementById('modalCardType');
     const modalCardText = document.getElementById('modalCardText');
 
+    const searchResultModalBackdrop = document.getElementById('searchResultModalBackdrop');
+    const searchResultGrid = document.getElementById('searchResultGrid');
+
     let selectedPlayerId = null;
+    let currentCandidates = [];
     let gameState = {
       activePlayerCount: 4,
       firstPlayerId: 1,
@@ -343,17 +359,27 @@
       if (!query) return;
 
       searchStatus.textContent = '検索中...';
-      const info = await fetchScryfallCommander(query);
+      const candidates = await fetchScryfallCommanderList(query);
       searchStatus.textContent = '';
 
-      if (info) {
-        gameState.players[selectedPlayerId].commanderInfo = info;
-        updateUI();
-        sendUpdate('commanderInfo', info);
+      if (candidates.length === 0) {
+        alert(`「${query}」に一致する統率者カードが見つかりませんでした。`);
+      } else if (candidates.length === 1) {
+        // 候補が1件のみの場合は即座に登録
+        applyCommanderSelection(candidates[0]);
         commanderInput.value = '';
       } else {
-        alert(`「${query}」に一致する統率者カードが見つかりませんでした。`);
+        // 候補が複数の場合はモーダルで選択画面を表示
+        currentCandidates = candidates;
+        showSearchResultModal(candidates);
       }
+    }
+
+    function applyCommanderSelection(info) {
+      if (!selectedPlayerId) return;
+      gameState.players[selectedPlayerId].commanderInfo = info;
+      updateUI();
+      sendUpdate('commanderInfo', info);
     }
 
     function clearCommander() {
@@ -363,63 +389,98 @@
       sendUpdate('commanderInfo', null);
     }
 
-    async function fetchScryfallCommander(cardName) {
+    async function fetchScryfallCommanderList(cardName) {
       try {
         const query = cardName.trim();
         const headers = { 'Accept': 'application/json' };
+        let rawCards = [];
 
         // 1. 日本語カード優先検索 (lang:ja)
         let url = `https://api.scryfall.com/cards/search?q=lang%3Aja+${encodeURIComponent(query)}`;
         let res = await fetch(url, { headers });
         let data = await res.json();
 
-        let card = null;
         if (res.ok && data.data && data.data.length > 0) {
-          card = data.data[0];
+          rawCards = data.data;
         } else {
-          // 2. 言語不問の通常検索 (英語・別言語含む)
+          // 2. 言語不問の通常検索
           url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}`;
           res = await fetch(url, { headers });
           data = await res.json();
 
           if (res.ok && data.data && data.data.length > 0) {
-            card = data.data[0];
+            rawCards = data.data;
           } else {
-            // 3. fuzzy 検索フォールバック
+            // 3. fuzzy 検索
             url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(query)}`;
             res = await fetch(url, { headers });
             if (res.ok) {
-              card = await res.json();
+              const singleCard = await res.json();
+              rawCards = [singleCard];
             }
           }
         }
 
-        if (!card) return null;
+        // 最大 15 件までに制限して各カードデータを整形
+        const candidates = rawCards.slice(0, 15).map(card => {
+          let imageUrl = '';
+          if (card.image_uris && card.image_uris.normal) {
+            imageUrl = card.image_uris.normal;
+          } else if (card.card_faces && card.card_faces[0] && card.card_faces[0].image_uris) {
+            imageUrl = card.card_faces[0].image_uris.normal;
+          }
 
-        let imageUrl = '';
-        if (card.image_uris && card.image_uris.normal) {
-          imageUrl = card.image_uris.normal;
-        } else if (card.card_faces && card.card_faces[0] && card.card_faces[0].image_uris) {
-          imageUrl = card.card_faces[0].image_uris.normal;
-        }
+          let text = card.printed_text || card.oracle_text || '';
+          if (!text && card.card_faces) {
+            text = card.card_faces.map(f => `${f.printed_name || f.name}:\n${f.printed_text || f.oracle_text || ''}`).join('\n\n');
+          }
 
-        let text = card.printed_text || card.oracle_text || '';
-        if (!text && card.card_faces) {
-          text = card.card_faces.map(f => `${f.printed_name || f.name}:\n${f.printed_text || f.oracle_text || ''}`).join('\n\n');
-        }
+          return {
+            name: card.printed_name || card.name,
+            oracleName: card.name,
+            imageUrl: imageUrl,
+            typeLine: card.printed_type_line || card.type_line || '',
+            text: text,
+            scryfallUrl: card.scryfall_uri || ''
+          };
+        });
 
-        return {
-          name: card.printed_name || card.name,
-          oracleName: card.name,
-          imageUrl: imageUrl,
-          typeLine: card.printed_type_line || card.type_line || '',
-          text: text,
-          scryfallUrl: card.scryfall_uri || ''
-        };
+        return candidates;
       } catch (err) {
         console.error('Scryfall fetch error:', err);
-        return null;
+        return [];
       }
+    }
+
+    function showSearchResultModal(candidates) {
+      searchResultGrid.innerHTML = '';
+      candidates.forEach((card, index) => {
+        const item = document.createElement('div');
+        item.className = 'search-result-item';
+        item.onclick = () => selectCommanderFromList(index);
+        item.innerHTML = `
+          <img class="search-result-thumb" src="${card.imageUrl || ''}" alt="">
+          <div class="search-result-info">
+            <div class="search-result-name">${card.name}</div>
+            <div class="search-result-type">${card.typeLine}</div>
+          </div>
+        `;
+        searchResultGrid.appendChild(item);
+      });
+      searchResultModalBackdrop.classList.add('active');
+    }
+
+    function selectCommanderFromList(index) {
+      if (currentCandidates[index]) {
+        applyCommanderSelection(currentCandidates[index]);
+        commanderInput.value = '';
+      }
+      closeSearchResultModal();
+    }
+
+    function closeSearchResultModal(e) {
+      if (e && e.target !== searchResultModalBackdrop && !e.target.classList.contains('card-modal-close')) return;
+      searchResultModalBackdrop.classList.remove('active');
     }
 
     function openCommanderModalFromClient() {
