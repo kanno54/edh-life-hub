@@ -950,29 +950,6 @@ p {
   margin-top: 0.5rem;
 }
 
-/* カメラ撮影ボタン */
-.btn-camera-scan {
-  background: linear-gradient(135deg, var(--primary) 0%, hsl(263, 70%, 40%) 100%);
-  color: white;
-  font-size: 0.9rem;
-  font-weight: 700;
-  padding: 0.6rem 0.9rem;
-  border: none;
-  border-radius: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: var(--transition-smooth);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  box-shadow: 0 4px 12px var(--primary-glow);
-}
-
-.btn-camera-scan:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px hsla(263, 70%, 50%, 0.5);
-}
-
 /* 対戦相手の統率者ミニバッジ（子機用） */
 .opponent-commander-badge {
   display: inline-flex;
@@ -1009,51 +986,6 @@ p {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 110px;
-}
-
-/* OCR読み取りアニメーションオーバーレイ */
-.ocr-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  gap: 1rem;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-}
-
-.ocr-overlay.active {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.ocr-spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid hsla(263, 70%, 50%, 0.2);
-  border-top-color: var(--accent-cyan);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.ocr-status-text {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text-main);
 }
 
 

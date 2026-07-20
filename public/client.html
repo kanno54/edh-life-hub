@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EDH Life Hub - 子機コントローラー</title>
   <link rel="stylesheet" href="css/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
   <div class="client-container">
@@ -48,11 +47,6 @@
             <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             登録
           </button>
-          <button class="btn-camera-scan" onclick="triggerCameraInput()" title="実物カードをカメラでスキャン">
-            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9a2 2 0 012-2h3l2-3h6l2 3h3a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="4"/></svg>
-            カメラ
-          </button>
-          <input type="file" id="cameraFileInput" accept="image/*" capture="environment" style="display: none;" onchange="handleCameraImage(event)">
         </div>
         
         <!-- 登録済み統率者バッジ -->
@@ -118,12 +112,6 @@
     </div>
   </div>
 
-  <!-- OCR読み取りインジケーター -->
-  <div id="ocrOverlay" class="ocr-overlay">
-    <div class="ocr-spinner"></div>
-    <div class="ocr-status-text" id="ocrStatusText">カード名を画像認識中...</div>
-  </div>
-
   <script>
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
@@ -141,7 +129,6 @@
     const commanderDamagePanel = document.getElementById('commanderDamagePanel');
 
     const commanderInput = document.getElementById('commanderInput');
-    const cameraFileInput = document.getElementById('cameraFileInput');
     const searchStatus = document.getElementById('searchStatus');
     const registeredCommanderBadgeArea = document.getElementById('registeredCommanderBadgeArea');
     const clientCmdThumb = document.getElementById('clientCmdThumb');
@@ -152,9 +139,6 @@
     const modalCardTitle = document.getElementById('modalCardTitle');
     const modalCardType = document.getElementById('modalCardType');
     const modalCardText = document.getElementById('modalCardText');
-
-    const ocrOverlay = document.getElementById('ocrOverlay');
-    const ocrStatusText = document.getElementById('ocrStatusText');
 
     let selectedPlayerId = null;
     let gameState = {
@@ -518,53 +502,6 @@
     function showCardModalByPlayerId(playerId) {
       if (gameState.players[playerId] && gameState.players[playerId].commanderInfo) {
         showCardModal(gameState.players[playerId].commanderInfo);
-      }
-    }
-
-    /* カメラ画像認識 (OCR) 機能 */
-    function triggerCameraInput() {
-      cameraFileInput.click();
-    }
-
-    async function handleCameraImage(event) {
-      const file = event.target.files && event.target.files[0];
-      if (!file) return;
-
-      try {
-        ocrOverlay.classList.add('active');
-        ocrStatusText.textContent = 'カードの文字を認識中...';
-
-        const imageUri = URL.createObjectURL(file);
-        
-        // Tesseract.js による日本語＋英語の OCR 解析
-        const worker = await Tesseract.createWorker('jpn+eng');
-        const ret = await worker.recognize(imageUri);
-        await worker.terminate();
-
-        URL.revokeObjectURL(imageUri);
-
-        const rawText = ret.data.text || '';
-        // 改行やノイズ文字を整形して、1行目（カードタイトル付近のテキスト）を取得
-        const lines = rawText.split('\n')
-          .map(l => l.trim())
-          .filter(l => l.length >= 2 && !/^\d+$/.test(l));
-
-        if (lines.length > 0) {
-          // カード名と思われるテキストを取得（記号のクレンジング）
-          let detectedName = lines[0].replace(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g, '').trim();
-          ocrStatusText.textContent = `「${detectedName}」でカード検索中...`;
-          
-          commanderInput.value = detectedName;
-          await handleSearchCommander();
-        } else {
-          alert('カード名を読み取れませんでした。手動で入力してください。');
-        }
-      } catch (err) {
-        console.error('OCR Error:', err);
-        alert('画像認識処理でエラーが発生しました。');
-      } finally {
-        ocrOverlay.classList.remove('active');
-        cameraFileInput.value = '';
       }
     }
 
