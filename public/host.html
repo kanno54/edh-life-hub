@@ -63,6 +63,19 @@
     </div>
   </div>
 
+  <!-- 統率者カード詳細表示用モーダル -->
+  <div id="cardModalBackdrop" class="card-modal-backdrop" onclick="closeCardModal(event)">
+    <div class="card-modal-content" onclick="event.stopPropagation()">
+      <button class="card-modal-close" onclick="closeCardModal()">&times;</button>
+      <img id="modalCardImg" class="card-modal-img" src="" alt="Commander Card">
+      <div class="card-modal-details">
+        <div id="modalCardTitle" class="card-modal-title">統率者カード名</div>
+        <div id="modalCardType" class="card-modal-type">タイプ行</div>
+        <div id="modalCardText" class="card-modal-text-box">カードテキスト</div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
@@ -138,6 +151,12 @@
           updatePoisonUI(playerId, value);
           addLogItem(oldName, `毒カウンターが ${oldPoison} から ${value} に変更されました。`, formattedTime);
         } 
+        else if (field === 'commanderInfo') {
+          gameState.players[playerId].commanderInfo = value;
+          updateCommanderInfoUI(playerId, value);
+          const cmdName = value ? value.name : 'なし';
+          addLogItem(oldName, `統率者カードが 「${cmdName}」 に設定されました。`, formattedTime);
+        }
         else if (field === 'commanderDamage') {
           const oldDamage = gameState.players[playerId].commanderDamage[subPlayerId];
           gameState.players[playerId].commanderDamage[subPlayerId] = value;
@@ -208,9 +227,19 @@
           }
         }
 
+        const cmdInfo = p.commanderInfo;
+        const hasCmd = cmdInfo && cmdInfo.name;
+
         card.innerHTML = `
           ${isFirst ? '<div class="first-player-badge"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg> FIRST PLAYER</div>' : ''}
           <div class="player-name" id="name-${i}">${p.name}</div>
+          
+          <!-- 統率者バッジ (親機) -->
+          <div class="commander-badge" id="cmd-badge-player-${i}" style="${hasCmd ? 'display: inline-flex;' : 'display: none;'}" onclick="openCommanderModalFromHost(${i})">
+            <img class="commander-thumb" id="cmd-thumb-player-${i}" src="${hasCmd ? cmdInfo.imageUrl : ''}" alt="">
+            <span class="commander-badge-name" id="cmd-name-player-${i}">${hasCmd ? cmdInfo.name : ''}</span>
+          </div>
+
           <div class="player-life" id="life-${i}">${p.life}</div>
           
           <div class="poison-display" id="poison-box-${i}" style="${p.poison > 0 ? 'display: flex;' : 'display: none;'}">
@@ -255,6 +284,60 @@
         box.style.display = 'none';
         box.classList.remove('active');
       }
+    }
+
+    function updateCommanderInfoUI(playerId, info) {
+      const badge = document.getElementById(`cmd-badge-player-${playerId}`);
+      const thumb = document.getElementById(`cmd-thumb-player-${playerId}`);
+      const name = document.getElementById(`cmd-name-player-${playerId}`);
+
+      if (!badge || !name || !thumb) return;
+
+      if (info && info.name) {
+        name.textContent = info.name;
+        if (info.imageUrl) {
+          thumb.src = info.imageUrl;
+          thumb.style.display = 'block';
+        } else {
+          thumb.style.display = 'none';
+        }
+        badge.style.display = 'inline-flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    function openCommanderModalFromHost(playerId) {
+      if (!gameState.players[playerId]) return;
+      const info = gameState.players[playerId].commanderInfo;
+      if (info) {
+        showCardModal(info);
+      }
+    }
+
+    function showCardModal(info) {
+      const cardModalBackdrop = document.getElementById('cardModalBackdrop');
+      const modalCardImg = document.getElementById('modalCardImg');
+      const modalCardTitle = document.getElementById('modalCardTitle');
+      const modalCardType = document.getElementById('modalCardType');
+      const modalCardText = document.getElementById('modalCardText');
+
+      modalCardTitle.textContent = info.name || '不明なカード';
+      modalCardType.textContent = info.typeLine || '';
+      modalCardText.textContent = info.text || '能力テキストはありません。';
+      if (info.imageUrl) {
+        modalCardImg.src = info.imageUrl;
+        modalCardImg.style.display = 'block';
+      } else {
+        modalCardImg.style.display = 'none';
+      }
+      cardModalBackdrop.classList.add('active');
+    }
+
+    function closeCardModal(e) {
+      const cardModalBackdrop = document.getElementById('cardModalBackdrop');
+      if (e && e.target !== cardModalBackdrop && !e.target.classList.contains('card-modal-close')) return;
+      cardModalBackdrop.classList.remove('active');
     }
 
     function updateCommanderDamageLabels(playerId, newName) {

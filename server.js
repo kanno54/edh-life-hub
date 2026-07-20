@@ -23,7 +23,8 @@ function createInitialState(count = 4) {
       name: `Player ${i}`,
       life: 40,
       poison: 0,
-      commanderDamage
+      commanderDamage,
+      commanderInfo: null
     };
   }
 
@@ -61,6 +62,8 @@ wss.on('connection', (ws) => {
             gameState.players[playerId].name = value;
           } else if (field === 'poison') {
             gameState.players[playerId].poison = value;
+          } else if (field === 'commanderInfo') {
+            gameState.players[playerId].commanderInfo = value;
           } else if (field === 'commanderDamage') {
             if (gameState.players[playerId].commanderDamage[subPlayerId] !== undefined) {
               gameState.players[playerId].commanderDamage[subPlayerId] = value;

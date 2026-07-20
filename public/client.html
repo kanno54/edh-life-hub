@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EDH Life Hub - 子機コントローラー</title>
   <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
   <div class="client-container">
@@ -34,6 +35,35 @@
       
       <!-- プレイヤー名入力 -->
       <input type="text" id="nameInput" class="input-name" placeholder="プレイヤー名を入力" onchange="sendNameUpdate()" onkeyup="if(event.key === 'Enter') this.blur()">
+
+      <!-- 統率者カード設定 -->
+      <div style="width: 100%; margin-bottom: 1.5rem;">
+        <div style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-bottom: 0.5rem; text-align: left; display: flex; justify-content: space-between; align-items: center;">
+          <span>⚔️ 統率者カード</span>
+          <span id="searchStatus" style="font-size: 0.75rem; color: var(--accent-cyan);"></span>
+        </div>
+        <div class="commander-input-group">
+          <input type="text" id="commanderInput" class="input-commander" placeholder="カード名を入力 (例: アトラクサ)" onkeyup="if(event.key === 'Enter') handleSearchCommander()">
+          <button class="btn-search-commander" onclick="handleSearchCommander()">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            登録
+          </button>
+          <button class="btn-camera-scan" onclick="triggerCameraInput()" title="実物カードをカメラでスキャン">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9a2 2 0 012-2h3l2-3h6l2 3h3a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="4"/></svg>
+            カメラ
+          </button>
+          <input type="file" id="cameraFileInput" accept="image/*" capture="environment" style="display: none;" onchange="handleCameraImage(event)">
+        </div>
+        
+        <!-- 登録済み統率者バッジ -->
+        <div id="registeredCommanderBadgeArea" style="display: none; justify-content: space-between; align-items: center; width: 100%; margin-top: 0.5rem;">
+          <div id="clientCommanderBadge" class="commander-badge" onclick="openCommanderModalFromClient()">
+            <img id="clientCmdThumb" class="commander-thumb" src="" alt="Card Thumbnail">
+            <span id="clientCmdName" class="commander-badge-name"></span>
+          </div>
+          <button class="btn-clear-commander" onclick="clearCommander()">登録解除</button>
+        </div>
+      </div>
 
       <!-- ライフカウンター -->
       <div id="lifeDisplay" class="client-life-display">40</div>
@@ -75,6 +105,25 @@
     </div>
   </div>
 
+  <!-- 統率者カード詳細表示用モーダル -->
+  <div id="cardModalBackdrop" class="card-modal-backdrop" onclick="closeCardModal(event)">
+    <div class="card-modal-content" onclick="event.stopPropagation()">
+      <button class="card-modal-close" onclick="closeCardModal()">&times;</button>
+      <img id="modalCardImg" class="card-modal-img" src="" alt="Commander Card">
+      <div class="card-modal-details">
+        <div id="modalCardTitle" class="card-modal-title">統率者カード名</div>
+        <div id="modalCardType" class="card-modal-type">タイプ行</div>
+        <div id="modalCardText" class="card-modal-text-box">カードテキスト</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCR読み取りインジケーター -->
+  <div id="ocrOverlay" class="ocr-overlay">
+    <div class="ocr-spinner"></div>
+    <div class="ocr-status-text" id="ocrStatusText">カード名を画像認識中...</div>
+  </div>
+
   <script>
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
@@ -90,6 +139,22 @@
     const lifeDisplay = document.getElementById('lifeDisplay');
     const poisonDisplay = document.getElementById('poisonDisplay');
     const commanderDamagePanel = document.getElementById('commanderDamagePanel');
+
+    const commanderInput = document.getElementById('commanderInput');
+    const cameraFileInput = document.getElementById('cameraFileInput');
+    const searchStatus = document.getElementById('searchStatus');
+    const registeredCommanderBadgeArea = document.getElementById('registeredCommanderBadgeArea');
+    const clientCmdThumb = document.getElementById('clientCmdThumb');
+    const clientCmdName = document.getElementById('clientCmdName');
+
+    const cardModalBackdrop = document.getElementById('cardModalBackdrop');
+    const modalCardImg = document.getElementById('modalCardImg');
+    const modalCardTitle = document.getElementById('modalCardTitle');
+    const modalCardType = document.getElementById('modalCardType');
+    const modalCardText = document.getElementById('modalCardText');
+
+    const ocrOverlay = document.getElementById('ocrOverlay');
+    const ocrStatusText = document.getElementById('ocrStatusText');
 
     let selectedPlayerId = null;
     let gameState = {
@@ -115,7 +180,6 @@
       if (message.type === 'init') {
         gameState = message.state;
         
-        // もし選択中のプレイヤーが有効範囲外になった場合は選択画面に戻す
         if (selectedPlayerId && selectedPlayerId > gameState.activePlayerCount) {
           resetSelection();
         }
@@ -137,6 +201,8 @@
           renderSelectionGrid();
         } else if (field === 'poison') {
           gameState.players[playerId].poison = value;
+        } else if (field === 'commanderInfo') {
+          gameState.players[playerId].commanderInfo = value;
         } else if (field === 'commanderDamage') {
           if (gameState.players[playerId].commanderDamage) {
             gameState.players[playerId].commanderDamage[subPlayerId] = value;
@@ -262,12 +328,140 @@
       lifeDisplay.textContent = p.life;
       poisonDisplay.textContent = p.poison;
 
+      // 統率者情報の表示更新
+      if (p.commanderInfo && p.commanderInfo.name) {
+        registeredCommanderBadgeArea.style.display = 'flex';
+        clientCmdName.textContent = p.commanderInfo.name;
+        if (p.commanderInfo.imageUrl) {
+          clientCmdThumb.src = p.commanderInfo.imageUrl;
+          clientCmdThumb.style.display = 'block';
+        } else {
+          clientCmdThumb.style.display = 'none';
+        }
+      } else {
+        registeredCommanderBadgeArea.style.display = 'none';
+      }
+
       if (p.commanderDamage) {
         for (const [subId, val] of Object.entries(p.commanderDamage)) {
           const valEl = document.getElementById(`cmd-val-${subId}`);
           if (valEl) valEl.textContent = val;
         }
       }
+
+      // 対戦相手の統率者バッジを含むパネルを最新化
+      buildCommanderDamagePanel();
+    }
+
+    async function handleSearchCommander() {
+      if (!selectedPlayerId) return;
+      const query = commanderInput.value.trim();
+      if (!query) return;
+
+      searchStatus.textContent = '検索中...';
+      const info = await fetchScryfallCommander(query);
+      searchStatus.textContent = '';
+
+      if (info) {
+        gameState.players[selectedPlayerId].commanderInfo = info;
+        updateUI();
+        sendUpdate('commanderInfo', info);
+        commanderInput.value = '';
+      } else {
+        alert(`「${query}」に一致する統率者カードが見つかりませんでした。`);
+      }
+    }
+
+    function clearCommander() {
+      if (!selectedPlayerId) return;
+      gameState.players[selectedPlayerId].commanderInfo = null;
+      updateUI();
+      sendUpdate('commanderInfo', null);
+    }
+
+    async function fetchScryfallCommander(cardName) {
+      try {
+        const query = cardName.trim();
+        const headers = { 'Accept': 'application/json' };
+
+        // 1. 日本語カード優先検索 (lang:ja)
+        let url = `https://api.scryfall.com/cards/search?q=lang%3Aja+${encodeURIComponent(query)}`;
+        let res = await fetch(url, { headers });
+        let data = await res.json();
+
+        let card = null;
+        if (res.ok && data.data && data.data.length > 0) {
+          card = data.data[0];
+        } else {
+          // 2. 言語不問の通常検索 (英語・別言語含む)
+          url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}`;
+          res = await fetch(url, { headers });
+          data = await res.json();
+
+          if (res.ok && data.data && data.data.length > 0) {
+            card = data.data[0];
+          } else {
+            // 3. fuzzy 検索フォールバック
+            url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(query)}`;
+            res = await fetch(url, { headers });
+            if (res.ok) {
+              card = await res.json();
+            }
+          }
+        }
+
+        if (!card) return null;
+
+        let imageUrl = '';
+        if (card.image_uris && card.image_uris.normal) {
+          imageUrl = card.image_uris.normal;
+        } else if (card.card_faces && card.card_faces[0] && card.card_faces[0].image_uris) {
+          imageUrl = card.card_faces[0].image_uris.normal;
+        }
+
+        let text = card.printed_text || card.oracle_text || '';
+        if (!text && card.card_faces) {
+          text = card.card_faces.map(f => `${f.printed_name || f.name}:\n${f.printed_text || f.oracle_text || ''}`).join('\n\n');
+        }
+
+        return {
+          name: card.printed_name || card.name,
+          oracleName: card.name,
+          imageUrl: imageUrl,
+          typeLine: card.printed_type_line || card.type_line || '',
+          text: text,
+          scryfallUrl: card.scryfall_uri || ''
+        };
+      } catch (err) {
+        console.error('Scryfall fetch error:', err);
+        return null;
+      }
+    }
+
+    function openCommanderModalFromClient() {
+      if (!selectedPlayerId || !gameState.players[selectedPlayerId]) return;
+      const info = gameState.players[selectedPlayerId].commanderInfo;
+      if (info) {
+        showCardModal(info);
+      }
+    }
+
+    function showCardModal(info) {
+      modalCardTitle.textContent = info.name || '不明なカード';
+      modalCardType.textContent = info.typeLine || '';
+      modalCardText.textContent = info.text || '能力テキストはありません。';
+      if (info.imageUrl) {
+        modalCardImg.src = info.imageUrl;
+        modalCardImg.style.display = 'block';
+      } else {
+        modalCardImg.style.display = 'none';
+      }
+      cardModalBackdrop.classList.add('active');
+    }
+
+    function closeCardModal(e) {
+      if (e && e.target !== cardModalBackdrop && !e.target.classList.contains('card-modal-close')) return;
+      cardModalBackdrop.classList.remove('active');
     }
 
     function buildCommanderDamagePanel() {
@@ -280,21 +474,97 @@
 
       for (let i = 1; i <= count; i++) {
         if (i !== selectedPlayerId) {
-          const opponentName = gameState.players[i]?.name || `Player ${i}`;
+          const opp = gameState.players[i];
+          const opponentName = opp?.name || `Player ${i}`;
           const currentDmg = (p.commanderDamage && p.commanderDamage[i]) || 0;
+          const oppCmd = opp?.commanderInfo;
+          const hasOppCmd = oppCmd && oppCmd.name;
 
           const row = document.createElement('div');
           row.className = 'sub-control-row';
+          row.style.flexDirection = 'column';
+          row.style.alignItems = 'stretch';
+          row.style.gap = '0.5rem';
+
+          let oppCmdHtml = '';
+          if (hasOppCmd) {
+            oppCmdHtml = `
+              <div class="opponent-commander-badge" onclick="showCardModalByPlayerId(${i})" title="タップして統率者カード詳細を確認">
+                <img class="opponent-commander-thumb" src="${oppCmd.imageUrl || ''}" alt="">
+                <span class="opponent-commander-name">${oppCmd.name}</span>
+                <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+              </div>
+            `;
+          }
+
           row.innerHTML = `
-            <span class="sub-control-label" id="cmd-label-${i}">vs ${opponentName}</span>
-            <div class="sub-control-btns">
-              <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, -1)" style="color: var(--accent-rose);">-</button>
-              <span class="sub-control-val" id="cmd-val-${i}">${currentDmg}</span>
-              <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, 1)" style="color: var(--accent-emerald);">+</button>
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+              <div>
+                <span class="sub-control-label" id="cmd-label-${i}">vs ${opponentName}</span>
+                ${oppCmdHtml}
+              </div>
+              <div class="sub-control-btns">
+                <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, -1)" style="color: var(--accent-rose);">-</button>
+                <span class="sub-control-val" id="cmd-val-${i}">${currentDmg}</span>
+                <button class="btn-small-pad" onclick="changeCommanderDamage(${i}, 1)" style="color: var(--accent-emerald);">+</button>
+              </div>
             </div>
           `;
           commanderDamagePanel.appendChild(row);
         }
+      }
+    }
+
+    function showCardModalByPlayerId(playerId) {
+      if (gameState.players[playerId] && gameState.players[playerId].commanderInfo) {
+        showCardModal(gameState.players[playerId].commanderInfo);
+      }
+    }
+
+    /* カメラ画像認識 (OCR) 機能 */
+    function triggerCameraInput() {
+      cameraFileInput.click();
+    }
+
+    async function handleCameraImage(event) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      try {
+        ocrOverlay.classList.add('active');
+        ocrStatusText.textContent = 'カードの文字を認識中...';
+
+        const imageUri = URL.createObjectURL(file);
+        
+        // Tesseract.js による日本語＋英語の OCR 解析
+        const worker = await Tesseract.createWorker('jpn+eng');
+        const ret = await worker.recognize(imageUri);
+        await worker.terminate();
+
+        URL.revokeObjectURL(imageUri);
+
+        const rawText = ret.data.text || '';
+        // 改行やノイズ文字を整形して、1行目（カードタイトル付近のテキスト）を取得
+        const lines = rawText.split('\n')
+          .map(l => l.trim())
+          .filter(l => l.length >= 2 && !/^\d+$/.test(l));
+
+        if (lines.length > 0) {
+          // カード名と思われるテキストを取得（記号のクレンジング）
+          let detectedName = lines[0].replace(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g, '').trim();
+          ocrStatusText.textContent = `「${detectedName}」でカード検索中...`;
+          
+          commanderInput.value = detectedName;
+          await handleSearchCommander();
+        } else {
+          alert('カード名を読み取れませんでした。手動で入力してください。');
+        }
+      } catch (err) {
+        console.error('OCR Error:', err);
+        alert('画像認識処理でエラーが発生しました。');
+      } finally {
+        ocrOverlay.classList.remove('active');
+        cameraFileInput.value = '';
       }
     }
 
